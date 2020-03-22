@@ -127,6 +127,62 @@ $ curl -XPOST http://localhost:3000 --data '{"some":"json"}'
 # => echo:{:some "json"}
 ```
 
+## Intermediate topics
+
+### Composing handlers
+
+If you're handler resolves to `nil` - i.e. `(v/resolve nil)` - it can be composed with other handlers. Handlers will be
+called from right to left until a rejection is returned, or a value other than `nil` is resolved.
+
+```clojure
+(require '[com.ben-allred.espresso.core :as espresso])
+(require '[com.ben-allred.vow.core :as v])
+
+(def foo (espresso/comp (constantly (v/resolve :won't-happen))
+                        (constantly (v/resolve :foo))
+                        (constantly (v/resolve))))
+(v/peek (foo "request") println)
+;; [:success :foo]
+
+(def bar (espresso/comp (constantly (v/resolve :won't-happen))
+                        (constantly (v/reject))))
+(v/peek (bar "request") println)
+;; [:error nil]
+```
+
+Here's an example of using it as a handler.
+
+```clojure
+(require '[com.ben-allred.espresso.core :as espresso])
+(require '[com.ben-allred.vow.core :as v])
+
+(defn handler-1 [request]
+  (v/resolve (when (= (:method request) :get)
+               {:status 200
+                :body   "get"})))
+
+(defn handler-2 [request]
+  (v/resolve (when (= (:method request) :post)
+               {:status 200
+                :body   "post"})))
+
+(def my-default-handler
+  (constantly (v/resolve {:status 404
+                          :body   "not found"})))
+
+(def server (espresso/create-server (esspresso/comp my-default-handler my-handler-2 my-handler-1)))
+(.listen server 3000)
+```
+
+```bash
+$ curl http://localhost:3000
+# => get
+$ curl -XPOST http://localhost:3000
+# => post
+$ curl -XPUT -v http://localhost:3000
+# => not found
+```
+
 ### Routing
 
 The `espresso` library does not handle routing. Feel free to use your favorite Clojurescript-friendly routing library.
@@ -153,7 +209,24 @@ The `espresso` library does not handle routing. Feel free to use your favorite C
               :body   (str [:bar/post route-params])}))
 
 (defmethod my-handler :default [_]
-  (v/resolve {:status 404}))
+  (v/resolve))
+
+(defmulti my-admin-handler :bidi/route)
+
+(defmethod my-admin-handler :secrets/get [_]
+  (v/then (look-up-secrets)
+          (partial assoc {:status 200} :body)))
+
+(defmethod my-admin-handler :default [_]
+  (v/resolve))
+
+(def my-not-found-handler
+  (constantly (v/resolve {:status 404})))
+
+(defn my-auth-middleware [handler]
+  (fn [request]
+    (-> (authenticated? request)
+        (v/then handler (constantly {:status 401})))))
 
 (defn with-routing [handler routes]
   (fn [request]
@@ -164,11 +237,15 @@ The `espresso` library does not handle routing. Feel free to use your favorite C
       (handler (cond-> request
                  route (assoc :bidi/route route :bid/route-params route-params))))))
 
-(def server (-> my-handler
-                (with-routing ["" {"/foo" :foo/*
-                                   ["/bar/" :bar-id] {:get  :bar/get
-                                                      :post :bar/post}}])
-                espresso/create-server))
+(def server
+  (espresso/create-server (espresso/comp my-not-found-handler
+                                         (with-routing my-handler
+                                                       ["" {"/foo"            :foo/*
+                                                            ["/bar/" :bar-id] {:get  :bar/get
+                                                                               :post :bar/post}}])
+                                         (-> my-auth-handler
+                                             my-auth-middleware
+                                             (with-routing ["" {"/admin/secrets" :secrets/get}])))))
 (.listen server 3000)
 ```
 
@@ -179,6 +256,12 @@ $ curl http://localhost:3000/bar/123
 # => [:bar/get {:bar-id "123"}]
 $ curl -XPOST http://localhost:3000/bar/baz
 # => [:bar/post {:bar-id "baz"}]
+$ curl -H 'Authorization: {ADMIN_TOKEN}' http://localhost:3000/admin/secrets
+# => some juicy secrets
+$ curl -H 'Authorization: {NON_ADMIN_TOKEN}' -v http://localhost:3000/admin/secrets
+# ...
+# < HTTP/1.1 401 Unauthorized
+# ...
 $ curl -v http://localhost:3000
 # ...
 # < HTTP/1.1 404 Not Found

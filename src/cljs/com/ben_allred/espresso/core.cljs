@@ -1,5 +1,5 @@
 (ns com.ben-allred.espresso.core
-  (:refer-clojure :exclude [get use])
+  (:refer-clojure :exclude [comp])
   (:require
     [clojure.string :as string]
     [com.ben-allred.vow.core :as v :include-macros true]
@@ -35,4 +35,20 @@
         (v/then (->response res)))))
 
 (def ^{:arglists '([handler])} create-server
-  (comp http/createServer wrap-handler))
+  (clojure.core/comp http/createServer wrap-handler))
+
+(defn comp
+  ([]
+   (constantly (v/resolve)))
+  ([handler]
+   handler)
+  ([handler-1 & handlers]
+   (reduce (fn [handler f]
+             (fn [request]
+               (-> (f request)
+                   (v/then (fn [response]
+                             (if (nil? response)
+                               (handler request)
+                               response))))))
+           handler-1
+           handlers)))
