@@ -43,7 +43,7 @@
   (comp http/createServer wrap-handler))
 
 (defn combine
-  "A function for composing two or more handlers. Each handler will be called from right to left until
+  "A function for composing two or more handlers. Each handler will be called from left to right until
   one returns a result other than `nil` (or all handlers have been called)."
   ([]
    (constantly (v/resolve)))
@@ -52,10 +52,10 @@
   ([handler-1 & handlers]
    (reduce (fn [handler f]
              (fn [request]
-               (-> (f request)
+               (-> (handler request)
                    (v/then (fn [response]
                              (if (nil? response)
-                               (handler request)
+                               (f request)
                                response))))))
            handler-1
            handlers)))

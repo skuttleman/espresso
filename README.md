@@ -129,20 +129,20 @@ $ curl -XPOST -H 'Content-Type: application/edn' -H 'Accept: application/edn' ht
 ### Composing handlers
 
 If you're handler resolves to `nil` - i.e. `(v/resolve nil)` - it can be composed with other handlers. Handlers will be
-called from right to left until a rejection is returned, or a value other than `nil` is resolved.
+called from left to right until a rejection is returned, or a value other than `nil` is resolved.
 
 ```clojure
 (require '[com.ben-allred.espresso.core :as es])
 (require '[com.ben-allred.vow.core :as v])
 
-(def foo (es/combine (constantly (v/resolve :won't-happen))
+(def foo (es/combine (constantly (v/resolve))
                      (constantly (v/resolve :foo))
-                     (constantly (v/resolve))))
+                     (constantly (v/resolve :won't-happen))))
 (v/peek (foo "request") println)
 ;; [:success :foo]
 
-(def bar (es/combine (constantly (v/resolve :won't-happen))
-                     (constantly (v/reject))))
+(def bar (es/combine (constantly (v/reject))
+                     (constantly (v/resolve :won't-happen))))
 (v/peek (bar "request") println)
 ;; [:error nil]
 ```
@@ -167,7 +167,7 @@ Here's an example of using it as a handler.
   (constantly (v/resolve {:status 404
                           :body   "not found"})))
 
-(def server (es/create-server (es/combine my-default-handler my-handler-2 my-handler-1)))
+(def server (es/create-server (es/combine my-handler-1 my-handler-2 my-default-handler)))
 (.listen server 3000)
 ```
 
@@ -235,14 +235,14 @@ The `espresso` library does not handle routing. Feel free to use your favorite C
                  route (assoc :bidi/route route :bidi/route-params route-params))))))
 
 (def server
-  (es/create-server (es/combine my-not-found-handler
-                                (with-routing my-handler
+  (es/create-server (es/combine (with-routing my-handler
                                               ["" {"/foo"            :foo/*
                                                    ["/bar/" :bar-id] {:get  :bar/get
                                                                       :post :bar/post}}])
                                 (-> my-auth-handler
                                     my-auth-middleware
-                                    (with-routing ["" {"/admin/secrets" :secrets/get}])))))
+                                    (with-routing ["" {"/admin/secrets" :secrets/get}]))
+                                my-not-found-handler)))
 (.listen server 3000)
 ```
 
