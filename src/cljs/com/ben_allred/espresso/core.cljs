@@ -1,5 +1,4 @@
 (ns com.ben-allred.espresso.core
-  (:refer-clojure :exclude [comp])
   (:require
     [clojure.string :as string]
     [com.ben-allred.vow.core :as v :include-macros true]
@@ -28,16 +27,24 @@
         (js/Buffer.isBuffer body) (.end res body encoding)
         :else (.end res (str body) "utf8")))))
 
-(defn wrap-handler [handler]
+(defn wrap-handler
+  "Converts an espresso handler fn into a callback suitable for a NodeJS server"
+  [handler]
   (fn [req res]
     (-> (v/promise (handler (->request req res)))
         (v/catch (fn [err] {:status 500 :body err}))
         (v/then (->response res)))))
 
 (def ^{:arglists '([handler])} create-server
-  (clojure.core/comp http/createServer wrap-handler))
+  "Takes an espresso handler and makes a NodeJS http sever.
 
-(defn comp
+  (def server (create-server my-handler))
+  (.listen server 8080 (fn [] \"the server is listening\"))"
+  (comp http/createServer wrap-handler))
+
+(defn combine
+  "A function for composing two or more handlers. Each handler will be called from right to left until
+  one returns a result other than `nil` (or all handlers have been called)."
   ([]
    (constantly (v/resolve)))
   ([handler]

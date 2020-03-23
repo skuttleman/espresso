@@ -12,7 +12,7 @@ Clojure/script interface that mimics Javascript promises.
 Here is a simple example.
 
 ```clojure
-(require '[com.ben-allred.espresso.core :as espresso])
+(require '[com.ben-allred.espresso.core :as es])
 (require '[com.ben-allred.vow.core :as v])
 
 (def my-handler [request]
@@ -20,8 +20,8 @@ Here is a simple example.
               :headers {"content-type" "application/json"}
               :body    "{\"some\":\"json\"}"}))
 
-(def server (espresso/create-server my-handler))
-;; same as (http/createServer (espresso/wrap-handler my-handler))
+(def server (es/create-server my-handler))
+;; same as (http/createServer (es/wrap-handler my-handler))
 
 (.listen server 3000 (fn [] (js/console.log "The server is listening on PORT 3000")))
 ```
@@ -36,7 +36,7 @@ $ curl http://localhost:3000
 Like `ring` for clojure, middleware is built by simply passing your handler to another function that returns a new handler.
 
 ```clojure
-(require '[com.ben-allred.espresso.core :as espresso])
+(require '[com.ben-allred.espresso.core :as es])
 (require '[com.ben-allred.vow.core :as v])
 
 (def my-handler [request]
@@ -61,7 +61,7 @@ Like `ring` for clojure, middleware is built by simply passing your handler to a
 (def server (-> my-handler
                 my-middleware
                 my-error-handler
-                espresso/create-server))
+                es/create-server))
 (.listen server 3000)
 ```
 
@@ -72,8 +72,8 @@ ways. 1) Read the body into memory and parse it into something usable, or 2) pip
 when you want to parse it in memory, a convenience middleware is provided that reads the stream into a string.
 
 ```clojure
-(require '[com.ben-allred.espresso.core :as espresso])
-(require '[com.ben-allred.espresso.middleware :as espressomw])
+(require '[com.ben-allred.espresso.core :as es])
+(require '[com.ben-allred.espresso.middleware :as esmw])
 (require '[com.ben-allred.vow.core :as v])
 
 (defn my-handler [request]
@@ -81,8 +81,8 @@ when you want to parse it in memory, a convenience middleware is provided that r
               :body   (str "echo:" (:body request))}))
 
 (def server (-> my-handler
-                espressomw/with-body
-                espresso/create-server))
+                esmw/with-body
+                es/create-server))
 (.listen server 3000)
 ```
 
@@ -91,40 +91,37 @@ $ curl -XPOST http://localhost:3000 --data 'this is the body'
 # => echo:this is the body
 ```
 
-If you want to pipe the body, of have access to NodeJS's lower level API for some reason, the `Request` and `Response`
-objects exist on the `request` map as `:js/request` and `:js/response` respectively.
+If you want to pipe the body to another target or have access to NodeJS's lower level API for some reason, the `Request`
+and `Response` objects exist on the `request` map as `:js/request` and `:js/response` respectively.
 
 #### Parsing the body
 
-Here is an example of parsing JSON.
+Here is an example of deserializing/serializing the request/response body in middleware.
 
 ```clojure
-(require '[com.ben-allred.espresso.core :as espresso])
-(require '[com.ben-allred.espresso.middleware :as espressomw])
+(require '[com.ben-allred.espresso.core :as es])
+(require '[com.ben-allred.espresso.middleware :as esmw])
 (require '[com.ben-allred.vow.core :as v])
+(require '[cljs.tools.reader.edn :as edn])
 
 (defn my-handler [request]
   (v/resolve {:status 200
-              :body   (str "echo:" (:body request))}))
+              :body   {:request (:body request)}}))
 
-(defn as-json [handler]
-  (fn [request]
-    (-> request
-      (update :body #(js->clj (js/JSON.parse %) :keywordize-keys true))
-      handler)))
-
-;; NOTE: middleware functions process the request from right to left (bottom to top),
-;; and process the response from left to right (top to bottom).
 (def server (-> my-handler
-                as-json 
-                espressomw/with-body
-                espresso/create-server))
+                (esmw/with-content-type {:deserializers {#"^application/json.*" #(js->clj (js/JSON.parse %) :keywordize-keys true)
+                                                         #"^application/edn.*"  edn/read-string}
+                                         :serializers   {#"^application/json.*" #(js/JSON.stringify (clj->js %))
+                                                         #"^application/edn.*"  pr-str}})
+                es/create-server))
 (.listen server 3000)
 ```
 
 ```bash
-$ curl -XPOST http://localhost:3000 --data '{"some":"json"}'
-# => echo:{:some "json"}
+$ curl -XPOST -H 'Content-Type: application/json' -H 'Accept: application/json' http://localhost:3000 --data '{"some":"json"}'
+# => {"request":{"some":"json"}}
+$ curl -XPOST -H 'Content-Type: application/edn' -H 'Accept: application/edn' http://localhost:3000 --data '{:some :edn}'
+# => {:request {:some :edn}}
 ```
 
 ## Intermediate topics
@@ -135,17 +132,17 @@ If you're handler resolves to `nil` - i.e. `(v/resolve nil)` - it can be compose
 called from right to left until a rejection is returned, or a value other than `nil` is resolved.
 
 ```clojure
-(require '[com.ben-allred.espresso.core :as espresso])
+(require '[com.ben-allred.espresso.core :as es])
 (require '[com.ben-allred.vow.core :as v])
 
-(def foo (espresso/comp (constantly (v/resolve :won't-happen))
-                        (constantly (v/resolve :foo))
-                        (constantly (v/resolve))))
+(def foo (es/combine (constantly (v/resolve :won't-happen))
+                     (constantly (v/resolve :foo))
+                     (constantly (v/resolve))))
 (v/peek (foo "request") println)
 ;; [:success :foo]
 
-(def bar (espresso/comp (constantly (v/resolve :won't-happen))
-                        (constantly (v/reject))))
+(def bar (es/combine (constantly (v/resolve :won't-happen))
+                     (constantly (v/reject))))
 (v/peek (bar "request") println)
 ;; [:error nil]
 ```
@@ -153,7 +150,7 @@ called from right to left until a rejection is returned, or a value other than `
 Here's an example of using it as a handler.
 
 ```clojure
-(require '[com.ben-allred.espresso.core :as espresso])
+(require '[com.ben-allred.espresso.core :as es])
 (require '[com.ben-allred.vow.core :as v])
 
 (defn handler-1 [request]
@@ -170,7 +167,7 @@ Here's an example of using it as a handler.
   (constantly (v/resolve {:status 404
                           :body   "not found"})))
 
-(def server (espresso/create-server (esspresso/comp my-default-handler my-handler-2 my-handler-1)))
+(def server (es/create-server (es/combine my-default-handler my-handler-2 my-handler-1)))
 (.listen server 3000)
 ```
 
@@ -190,7 +187,7 @@ The `espresso` library does not handle routing. Feel free to use your favorite C
 #### An example using `bidi`
 
 ```clojure
-(require '[com.ben-allred.espresso.core :as espresso])
+(require '[com.ben-allred.espresso.core :as es])
 (require '[com.ben-allred.vow.core :as v])
 (require '[bidi.bidi :as bidi])
 
@@ -230,22 +227,22 @@ The `espresso` library does not handle routing. Feel free to use your favorite C
 
 (defn with-routing [handler routes]
   (fn [request]
-    (let [{route :handler :keys [route-params]} (bid/match-route routes
-                                                                 (:path request)
-                                                                 :request-method
-                                                                 (:method request))]
+    (let [{route :handler :keys [route-params]} (bidi/match-route routes
+                                                                  (:path request)
+                                                                  :request-method
+                                                                  (:method request))]
       (handler (cond-> request
-                 route (assoc :bidi/route route :bid/route-params route-params))))))
+                 route (assoc :bidi/route route :bidi/route-params route-params))))))
 
 (def server
-  (espresso/create-server (espresso/comp my-not-found-handler
-                                         (with-routing my-handler
-                                                       ["" {"/foo"            :foo/*
-                                                            ["/bar/" :bar-id] {:get  :bar/get
-                                                                               :post :bar/post}}])
-                                         (-> my-auth-handler
-                                             my-auth-middleware
-                                             (with-routing ["" {"/admin/secrets" :secrets/get}])))))
+  (es/create-server (es/combine my-not-found-handler
+                                (with-routing my-handler
+                                              ["" {"/foo"            :foo/*
+                                                   ["/bar/" :bar-id] {:get  :bar/get
+                                                                      :post :bar/post}}])
+                                (-> my-auth-handler
+                                    my-auth-middleware
+                                    (with-routing ["" {"/admin/secrets" :secrets/get}])))))
 (.listen server 3000)
 ```
 
