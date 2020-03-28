@@ -31,7 +31,7 @@
   "Converts an espresso handler fn into a callback suitable for a NodeJS server"
   [handler]
   (fn [req res]
-    (-> (v/promise (handler (->request req res)))
+    (-> (v/vow (handler (->request req res)))
         (v/catch (fn [err] {:status 500 :body err}))
         (v/then (->response res)))))
 

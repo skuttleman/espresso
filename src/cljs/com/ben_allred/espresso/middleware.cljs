@@ -29,7 +29,7 @@
                                  (.on "data" (fn [chunk]
                                                (.append buffer chunk)))
                                  (.on "end" (fn []
-                                              (v/then (v/promise (str buffer))
+                                              (v/then (v/vow (str buffer))
                                                       resolve
                                                       reject)))
                                  (.on "error" reject)))))

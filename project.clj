@@ -1,10 +1,10 @@
-(defproject com.ben-allred/espresso "0.1.0-SNAPSHOT"
+(defproject com.ben-allred/espresso "0.2.0"
   :description "Espresso - A wrapper around NodeJS http module for composing web applications."
   :url "https://www.github.com/skuttleman/espresso"
   :license {:name "Eclipse Public License"
             :url  "http://www.eclipse.org/legal/epl-v10.html"}
   :min-lein-version "2.9.1"
-  :dependencies [[com.ben-allred/vow "0.3.2"]
+  :dependencies [[com.ben-allred/vow "0.4.0"]
                  [org.clojure/clojure "1.10.1"]
                  [org.clojure/clojurescript "1.10.597"]]
   :plugins [[lein-figwheel "0.5.19"]
